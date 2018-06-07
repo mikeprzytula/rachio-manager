@@ -45,13 +45,13 @@ mappings {
 	path("/rachioReceiver") { action: [ POST: "rachioReceiveHandler" ] }
 }
 
-def appVer() { return "1.0.1" }
+def appVer() { return "1.0.2" }
 
 def appInfoSect()	{
 	section() {
 		def str = ""
 		str += "${app?.name}"
-		str += "\nCopyright© 2018 Anthony Santilli"
+		str += "\nCopyright\u00A9 2018 Anthony Santilli"
 		str += "\nVersion: ${appVer()}"
 		paragraph str, image: "https://s3-us-west-2.amazonaws.com/rachio-media/smartthings/Rachio-logo-100px.png"
 	}
@@ -59,7 +59,7 @@ def appInfoSect()	{
 
 def startPage() {
 	getAccessToken()
-	if(!state?.accessToken) {
+	if(!atomicState?.accessToken) {
 		noOauthPage()
 	} else if(atomicState?.authToken) {
 		devicePage()
@@ -103,7 +103,7 @@ def authPage()  {
 		appInfoSect()
 		section() {
 			paragraph authPara
-			href url: "https://app.rach.io", style: "embedded", required: (!oauthTokenProvided), state: (oauthTokenProvided ? "complete" : ""), title: "Rachio", description: description
+			href url: "https://app.rach.io", style: "external", required: (!oauthTokenProvided), state: (oauthTokenProvided ? "complete" : ""), title: "Rachio", description: description
 			href "apiKeyPage", title: "Enter your API Key", description: (authKey ? "API Key Entered" : "Tap to Enter API Key"), state: (authKey ? "complete" : null), required: true
 		}
 		if(uninstallAllowed) { removeSect() }
@@ -409,14 +409,14 @@ def getDisplayName(iroName, zname) {
 //Section3: installed, updated, initialize methods
 def installed() {
 	log.trace "Installed with settings: ${settings}"
-	initialize()
+	runIn(10, "initialize", [overwrite: true])
 	atomicState?.installed = true
 }
 
 def updated() {
 	log.debug "Updated with settings: ${settings}"
 	unsubscribe()
-	initialize()
+	runIn(10, "initialize", [overwrite: true])
 }
 
 def initialize() {
@@ -469,6 +469,8 @@ def heartbeat() {
 	poll()
 }
 
+def getAppEndpointUrl(subPath)	{ return "${apiServerUrl("/api/smartapps/installations/${app.id}${subPath ? "/${subPath}" : ""}?access_token=${atomicState.accessToken}")}" }
+
 //Subscribes to the selected controllers API events that will be used to trigger a poll
 def initWebhook() {
 	//log.trace "initWebhook..."
@@ -476,7 +478,7 @@ def initWebhook() {
 	def whId = atomicState?.webhookId
 	def cmdType = whId == null ? "post" : "put"
 	def apiWebhookUrl = "${rootApiUrl()}/notification/webhook"
-	def endpointUrl = apiServerUrl("/api/token/${atomicState?.accessToken}/smartapps/installations/${app.id}/rachioReceiver")
+	def endpointUrl = getAppEndpointUrl("rachioReceiver")
 	def bodyData
 	if(!whId) { bodyData = ["device":["id":settings?.sprinklers], "externalId":app.id, "url": endpointUrl, "eventTypes":webhookEvtTypes()] }
 	else { bodyData = ["id":whId, "externalId":app.id, "url": endpointUrl, "eventTypes":webhookEvtTypes()] }
@@ -526,12 +528,15 @@ def webhookEvtTypes() {
 
 //Handles the http requests for the webhook methods
 def webhookHttp(url, jsonBody, type=null) {
-	//log.trace "webhookHttp($url, $jsonBody, $type)"
+	log.trace "webhookHttp($url, $jsonBody, $type)"
 	def returnStatus = false
 	def response = null
+	// def data = new JsonBuilder(jsonBody)
 	def cmdParams = [
 		uri: url,
-		headers: ["Authorization": "Bearer ${atomicState?.authToken}", "Content-Type": "application/json"],
+		contentType: "application/json",
+		requestContentType: "application/json",
+		headers: ["Authorization": "Bearer ${atomicState?.authToken}"],
 		body: jsonBody
 	]
 	try {
@@ -551,7 +556,7 @@ def webhookHttp(url, jsonBody, type=null) {
 			}
 		}
 		if(response) {
-			//log.debug "response.status: ${response?.status} | data: ${response?.data}"
+			log.debug "response.status: ${response?.status} | data: ${response?.data}"
 			if(response?.status in [200, 201, 204]) {
 				returnStatus = true
 				if(type in ["put", "post"]) {
